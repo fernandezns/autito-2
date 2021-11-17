@@ -64,9 +64,15 @@ typedef union{
 
 /* Private macro -------------------------------------------------------------*/
 /* USER CODE BEGIN PM */
-#define race 		flag1.bit.b0
-#define ON100MS		flag1.bit.b1
-#define ON10MS		flag1.bit.b2
+#define race 				flag1.bit.b0
+#define ON100MS				flag1.bit.b1
+#define ON10MS				flag1.bit.b2
+#define stop				flag1.bit.b3
+#define readyToSend			flag1.bit.b4
+#define espReadyToRecieve	flag1.bit.b5
+#define killRace			flag1.bit.b6
+#define espConnected		flag2.bit.b0
+#define sendALIVE			flag2.bit.b1
 
 #define UART_PC		2
 #define UART_ESP	1
@@ -90,25 +96,19 @@ const char ANS_CWJAP_MICROS[]="AT+CWJAP=\"MICROS\",\"micros1234567\"\r\nWIFI CON
 
 const char ANS_CIPMUX[]="AT+CIPMUX=0\r\n\r\nOK\r\n";
 const char ANS_CIPSTART[]="AT+CIPSTART=\"UDP\",\"192.168.0.17\",30016,3016\r\nCONNECT\r\n\r\nOK\r\n";//60
-
 const char ANS_CIPSEND[]={};
 const char AUTOMATIC_WIFI_CONNECTED[]={"WIFI CONNECTED\r\nWIFI GOT IP\r\n"};
 const char WIFI_DISCONNECT[]="WIFI DISCONNECT\r\n";
-
 const char CIFSR_STAIP[]="+CIFSR:STAIP,";
 const char OK[]="\r\nOK\r\n";
-
 const char CIPSEND1[]={'A','T','+','C','I','P','S','E','N','D','='};
 const char CIPSEND2[]={'\r','\n','\r','\n','O','K','\r','\n','>'};
 const char CIPSEND3[]="Recv ";
 const char CIPSEND4[]={" bytes\r\n\r\nSEND OK\r\n"};//25
-
 const char IPD[]="\r\n+IPD,";
 const char UNER[]="UNER";
 const char ALIVE[]={'U','N','E','R', 0x02 ,':',0xF0};
 const char ACK_D0[]={'U','N','E','R',0x03,':',0xD0,0x0D,0xDC};
-
-//const char COORD_SENSORES[]={53,46,37,30,24,16,8,0};
 const int COORD_SENSORES[]={-5,-4,-3,-2,-1,1,2,3,4,5};
 /* USER CODE END PM */
 
@@ -148,13 +148,11 @@ volatile uint8_t time10ms;
 uint8_t timeOut=0;
 uint8_t timeOut2=0;
 uint8_t timeOut3=0;
-uint8_t timeOut4=0;
+uint8_t timeToSendAlive=0;
 uint8_t timeOutADC=0;
 uint8_t timeOutPID=0;
 
 uint8_t duty=0;
-uint8_t readyToSend=0;
-uint8_t espReadyToRecieve=0;
 uint8_t decodeCIPSEND=0;
 uint8_t decodeCIFSR=0;
 char espIP[15];
@@ -173,12 +171,15 @@ uint8_t bytesToSend_aux=0;
 
 _sWork PWM_motor1,PWM_motor2,jobTime,error;
 _sWork valueADC[8];
-volatile flag flag1;
+volatile flag flag1,flag2;
 
 _sWork Kp,Kd,Ki;
 float integral=0,derivativo=0,turn=0,Error=0,lastError=0;
 
 uint8_t comandoActual=0;
+
+uint8_t firstCalcu=1,timeOutArranque;
+_sWork pwmBase;
 
 /* USER CODE END PV */
 
@@ -205,7 +206,7 @@ void readADC();
 void SerialCom(uint8_t cmd);
 float findTheLine();
 void DecodeQT();
-void calculatePID();
+void calculatePID(uint32_t pwmBase1,uint32_t pwmBase2);
 
 /* USER CODE END PFP */
 
@@ -397,6 +398,7 @@ void DecodeAnsESP(){
 					AT++;
 					i=0;
 					readyToSend=1;
+					espConnected=1;
 				}
 			}else{
 				if(!timeOut2){
@@ -423,7 +425,8 @@ void DecodeAnsESP(){
 								readyToSend=1;
 								i=0;
 								espReadyToRecieve=0;
-								duty=2;
+								sendALIVE=0;
+								timeToSendAlive=30;
 								break;
 							}
 						}
@@ -462,7 +465,8 @@ void DecodeAnsESP(){
 								espReadyToRecieve=0;
 								readyToSend=1;
 								indexR_RxESP=indexW_RxESP;
-								timeOut=50;
+								sendALIVE=0;
+								timeToSendAlive=30;
 								return;
 							}
 						}
@@ -482,6 +486,8 @@ void DecodeAnsESP(){
 								espReadyToRecieve=0;
 								readyToSend=1;
 								indexR_RxESP=indexW_RxESP;
+								sendALIVE=0;
+								timeToSendAlive=30;
 								break;
 							}
 						}
@@ -500,7 +506,8 @@ void DecodeAnsESP(){
 								espReadyToRecieve=0;
 								readyToSend=1;
 								indexR_RxESP=indexW_RxESP;
-
+								sendALIVE=0;
+								timeToSendAlive=30;
 								break;
 							}
 						}
@@ -514,6 +521,8 @@ void DecodeAnsESP(){
 							espReadyToRecieve=0;
 							readyToSend=1;
 							indexR_RxESP=indexW_RxESP;
+							sendALIVE=0;
+							timeToSendAlive=30;
 							break;
 						}
 						break;
@@ -525,8 +534,6 @@ void DecodeAnsESP(){
 								decodeCIPSEND=0;
 								readyToSend=1;
 								espReadyToRecieve=0;
-								AT++;
-								timeOut=50;
 							}
 						}else{
 							if(!timeOut2){
@@ -535,6 +542,8 @@ void DecodeAnsESP(){
 								decodeCIPSEND=0;
 								espReadyToRecieve=0;
 								readyToSend=1;
+								sendALIVE=0;
+								timeToSendAlive=30;
 								break;
 							}
 						}
@@ -543,7 +552,6 @@ void DecodeAnsESP(){
 
 			break;
 		case 7:
-			//timeOut2=2;
 			switch(decodeIPD){
 				case 0:
 					if(bufferRxESP[indexR_RxESP]==IPD[i]){
@@ -623,6 +631,9 @@ void DecodeAnsESP(){
 					break;
 			}
 			break;
+			default:
+
+				break;
 	}
 	indexR_RxESP++;
 }
@@ -827,7 +838,7 @@ void udpCom(uint8_t cmd){
 					memcpy((uint8_t*)&bufferTxESP[indexW_TxESP],"8\r\n",3);
 					indexW_TxESP+=3;
 					bytesToSend=8;
-					timeOut2=20;
+					timeOut2=2;
 					readyToSend=0;
 				}
 				else{
@@ -836,7 +847,8 @@ void udpCom(uint8_t cmd){
 					bufferTxESP[indexW_TxESP]='U'^'N'^'E'^'R'^0x02^':'^0xF0;
 					indexW_TxESP+=1;
 					espReadyToRecieve=0;
-					duty++;
+					sendALIVE=0;
+					readyToSend=0;
 				}
 				break;
 			case 0xD0:
@@ -859,36 +871,6 @@ void udpCom(uint8_t cmd){
 					duty++;
 				}
 				break;
-//			case 0xA1:
-//				if(!espReadyToRecieve){
-//					AT=6;
-//					memcpy(&bufferTxESP[indexW_TxESP],CIPSEND,11);
-//					indexW_TxESP+=11;
-//					memcpy(&bufferTxESP[indexW_TxESP],"10\r\n",4);
-//					indexW_TxESP+=4;
-//					bytesToSend=10;
-//					timeOut2=20;
-//					readyToSend=0;
-//				}
-//				else{
-//					memcpy(&bufferTxESP[indexW_TxESP],UNER,4);
-//					indexW_TxESP+=4;
-//					bufferTxESP[indexW_TxESP]=0x04;
-//					indexW_TxESP++;
-//					bufferTxESP[indexW_TxESP]=':';
-//					indexW_TxESP++;
-//					bufferTxESP[indexW_TxESP]=0xA1;
-//					indexW_TxESP++;
-//					bufferTxESP[indexW_TxESP]=valueADC.u8[0];
-//					indexW_TxESP++;
-//					bufferTxESP[indexW_TxESP]=valueADC.u8[1];
-//					indexW_TxESP++;
-//					bufferTxESP[indexW_TxESP]='U'^'N'^'E'^'R'^0x04^':'^0xA1^valueADC.u8[0]^valueADC.u8[1];
-//					indexW_TxESP++;
-//					espReadyToRecieve=0;
-//					timeOut=10;
-//				}
-//				break;
 		}
 	}
 }
@@ -944,8 +926,24 @@ void DecodeCommands(uint8_t *buffer,uint8_t indexCMD){
 
 
 	switch(buffer[indexCMD]){
-
-		case 0xC0:
+		case 0xB0://STOP AUTITO
+				comandoActual=0xB0;
+				stop=1;
+				break;
+		case 0xF1: //START AUTITO
+				PWM_motor1.u8[0]=buffer[indexCMD+i];
+				i++;
+				PWM_motor1.u8[1]=buffer[indexCMD+i];
+				i++;
+				PWM_motor1.u8[2]=buffer[indexCMD+i];
+				i++;
+				PWM_motor1.u8[3]=buffer[indexCMD+i];
+				PWM_motor2.u32=PWM_motor1.u32;
+				comandoActual=0xF1;
+				race=1;
+				timeOutPID=2;
+				break;
+		case 0xC0:	//SETEAR PARAMETROS CONTROL PID
 				Kp.u8[0]=buffer[indexCMD+i];
 				i++;
 				Kp.u8[1]=buffer[indexCMD+i];
@@ -971,87 +969,75 @@ void DecodeCommands(uint8_t *buffer,uint8_t indexCMD){
 				Ki.u8[3]=buffer[indexCMD+i];
 				i++;
 				comandoActual=0xC0;
-				race=1;
-				timeOutPID=2;
+
 				break;
-		case 0xF0:
+		case 0xF0: //ALIVE
 				duty=2;
 				readyToSend=1;
 				AT=6;
 				break;
 
-		case 0xD0://COMANDO EN HEX 55 4E 45 52 0E 3A D0 C8 00 00 00 C8 00 00 00 88 13 00 00 73 (5 SEG)
-			//55 4E 45 52 0E 3A D0 C8 00 00 00 C8 00 00 00 E8 03 00 00 03 (1 SEG)
-			//55 4E 45 52 0E 3A D0 C8 00 00 00 C8 00 00 00 D0 07 00 00 3F (2 SEG)
-			PWM_motor1.u8[0]=buffer[indexCMD+i];
-			i++;
-			PWM_motor1.u8[1]=buffer[indexCMD+i];
-			i++;
-			PWM_motor1.u8[2]=buffer[indexCMD+i];
-			i++;
-			PWM_motor1.u8[3]=buffer[indexCMD+i];
-			i++;
-			PWM_motor2.u8[0]=buffer[indexCMD+i];
-			i++;
-			PWM_motor2.u8[1]=buffer[indexCMD+i];
-			i++;
-			PWM_motor2.u8[2]=buffer[indexCMD+i];
-			i++;
-			PWM_motor2.u8[3]=buffer[indexCMD+i];
-			i++;
+		case 0xD0://JOB TIME
+				PWM_motor1.u8[0]=buffer[indexCMD+i];
+				i++;
+				PWM_motor1.u8[1]=buffer[indexCMD+i];
+				i++;
+				PWM_motor1.u8[2]=buffer[indexCMD+i];
+				i++;
+				PWM_motor1.u8[3]=buffer[indexCMD+i];
+				i++;
+				PWM_motor2.u8[0]=buffer[indexCMD+i];
+				i++;
+				PWM_motor2.u8[1]=buffer[indexCMD+i];
+				i++;
+				PWM_motor2.u8[2]=buffer[indexCMD+i];
+				i++;
+				PWM_motor2.u8[3]=buffer[indexCMD+i];
+				i++;
 
-			jobTime.u8[0]=bufferRxESP[indexCMD+i];
-			i++;
-			jobTime.u8[1]=bufferRxESP[indexCMD+i];
-			i++;
-			jobTime.u8[2]=bufferRxESP[indexCMD+i];
-			i++;
-			jobTime.u8[3]=bufferRxESP[indexCMD+i];
-			i++;
-
-			timeOut4=jobTime.u32/100;
-
-			__HAL_TIM_SET_COMPARE(&htim3,TIM_CHANNEL_1,PWM_motor1.u32);
-			__HAL_TIM_SET_COMPARE(&htim3,TIM_CHANNEL_2,0);
-			__HAL_TIM_SET_COMPARE(&htim3,TIM_CHANNEL_3,0);
-			__HAL_TIM_SET_COMPARE(&htim3,TIM_CHANNEL_4,PWM_motor2.u32);
-			race=1;
-			duty=2;
-			comandoActual=0xD0;
-			comando=0xD0;
-			readyToSend=1;
-			break;
+				jobTime.u8[0]=bufferRxESP[indexCMD+i];
+				i++;
+				jobTime.u8[1]=bufferRxESP[indexCMD+i];
+				i++;
+				jobTime.u8[2]=bufferRxESP[indexCMD+i];
+				i++;
+				jobTime.u8[3]=bufferRxESP[indexCMD+i];
+				i++;
+				jobTime.u32=jobTime.u32/100;
+				__HAL_TIM_SET_COMPARE(&htim3,TIM_CHANNEL_1,PWM_motor1.u32);
+				__HAL_TIM_SET_COMPARE(&htim3,TIM_CHANNEL_2,0);
+				__HAL_TIM_SET_COMPARE(&htim3,TIM_CHANNEL_3,0);
+				__HAL_TIM_SET_COMPARE(&htim3,TIM_CHANNEL_4,PWM_motor2.u32);
+				race=1;
+				killRace=1;
+				duty=2;
+				comandoActual=0xD0;
+				comando=0xD0;
+				readyToSend=1;
+				break;
 
 
 
 	}
 }
-uint8_t firstCalcu=1,timeOutArranque;
-float pwmBase;
-void calculatePID(){
-	if(firstCalcu){
-		firstCalcu=0;
-		timeOutArranque=2;
-		pwmBase=150;
-	}
-	else{
-		if(!timeOutArranque){
-			pwmBase=120;
-		}
-	}
+
+void calculatePID(uint32_t pwmBase1,uint32_t pwmBase2){
+	float pwm1,pwm2;
+
 	integral+=error.f;
 	derivativo=error.f-lastError;
 	turn= Kp.f*error.f + Kd.f*derivativo + Ki.f*integral;
-	PWM_motor1.f=pwmBase-turn;
-	PWM_motor2.f=pwmBase+turn;
-	if(PWM_motor1.f>200)
-		PWM_motor1.f=200;
-	if(PWM_motor2.f>200)
-			PWM_motor2.f=200;
-	__HAL_TIM_SET_COMPARE(&htim3,TIM_CHANNEL_1,PWM_motor1.f);
+	pwm1=pwmBase1-turn;
+	pwm2=pwmBase2+turn;
+
+	if(pwm1>200)
+		pwm1=200;
+	if(pwm2>200)
+		pwm2=200;
+	__HAL_TIM_SET_COMPARE(&htim3,TIM_CHANNEL_1,pwm1);
 	__HAL_TIM_SET_COMPARE(&htim3,TIM_CHANNEL_2,0);
 	__HAL_TIM_SET_COMPARE(&htim3,TIM_CHANNEL_3,0);
-	__HAL_TIM_SET_COMPARE(&htim3,TIM_CHANNEL_4,PWM_motor2.f);
+	__HAL_TIM_SET_COMPARE(&htim3,TIM_CHANNEL_4,pwm2);
 	lastError=error.f;
 }
 
@@ -1107,10 +1093,18 @@ int main(void)
   HAL_GPIO_WritePin(GPIOB, GPIO_PIN_10, GPIO_PIN_SET);//ESP8266 Pin Enable
   timeOut2=30;
   timeOut3=10;
+  timeToSendAlive=30;
   timeOut=30;
   readyToSend=1;
   race=0;
+  killRace=0;
+  stop=0;
   duty=0;
+  espConnected=0;
+  sendALIVE=0;
+
+  PWM_motor1.u32=0;
+  PWM_motor2.u32=0;
   time100ms=200;
   time10ms=20;
   timeOutADC=0;
@@ -1128,10 +1122,10 @@ int main(void)
 			timeOut2--;
 		if(timeOut3>0)
 			timeOut3--;
-		if(timeOut4>0)
-			timeOut4--;
-		if(timeOutArranque>0)
-			timeOutArranque--;
+		if(jobTime.u32>0)
+			jobTime.u32--;
+		if((timeToSendAlive>0)&&(espConnected))
+			timeToSendAlive--;
 
 	  }
 
@@ -1147,7 +1141,18 @@ int main(void)
 	  if(!timeOut3){
 		  HAL_GPIO_TogglePin(GPIOA, GPIO_PIN_5);
 		  timeOut3=10;
+
 	  }
+	  if( (!timeToSendAlive) && (espConnected) ){
+		  sendALIVE=1;
+		  espReadyToRecieve=0;
+		  timeToSendAlive=30;
+		  readyToSend=1;
+	  }
+	  if(sendALIVE)
+		  udpCom(0xF0);
+
+
 	  switch(duty){
 	  	  case 0:
 	  		  if(!timeOut){
@@ -1159,49 +1164,48 @@ int main(void)
 	  	  case 1:
 	  		  initESP();
 	  		  break;
-	  	  case 2:
-	  		  udpCom(0xF0);
-	  		  break;
-	  	  case 3:
-	  		  if(!timeOutADC){
-	  			readADC();
-				error.f=findTheLine();
-				timeOutADC=2;
-	  			SerialCom(0xA1);
-	  		  }
-	  		  break;
 	  }
 
-	  if( (race)&&(!timeOutPID)&&(comandoActual==0xC0)){
-		  calculatePID();
+	  if(!timeOutADC){
+		readADC();
+		error.f=findTheLine();
+		timeOutADC=2;
+//		SerialCom(0xA1);
+	  }
+
+	  if( (race) && (!timeOutPID) ){
+		  calculatePID(PWM_motor1.u32,PWM_motor2.u32);
 		  timeOutPID=2;
+
 	  }
 
-	  if(indexR_PC_RX!=indexW_PC_RX){
-		  DecodeQT();
-	  }
-
-	  if(indexR_TxESP!=indexW_TxESP){
-		  uartTX(UART_ESP);
-	  }
-
-	  if(indexR_Debug!=indexW_Debug){
-		  uartTX(UART_PC);
-	  }
-
-
-	  if(indexR_RxESP!=indexW_RxESP){
-		  DecodeAnsESP();
-	  }
-
-
-	  if((!timeOut4)&&(race)&&(comandoActual==0xD0)){
-		race=0;
+	  if( ( ( (!jobTime.u32) && (killRace) ) ) || (stop) ) {
+		  stop=0;
+		  race=0;
+		  killRace=0;
 		__HAL_TIM_SET_COMPARE(&htim3,TIM_CHANNEL_1,0);
 		__HAL_TIM_SET_COMPARE(&htim3,TIM_CHANNEL_2,0);
 		__HAL_TIM_SET_COMPARE(&htim3,TIM_CHANNEL_3,0);
 		__HAL_TIM_SET_COMPARE(&htim3,TIM_CHANNEL_4,0);
 	  }
+
+
+	  if(indexR_PC_RX!=indexW_PC_RX)
+		  DecodeQT();
+
+
+	  if(indexR_TxESP!=indexW_TxESP)
+		  uartTX(UART_ESP);
+
+
+	  if(indexR_Debug!=indexW_Debug)
+		  uartTX(UART_PC);
+
+
+
+	  if(indexR_RxESP!=indexW_RxESP)
+		  DecodeAnsESP();
+
 
 	  if((HAL_GPIO_ReadPin(GPIOB, GPIO_PIN_10)==GPIO_PIN_RESET)&&(!timeOut)){
 		  HAL_GPIO_WritePin(GPIOB, GPIO_PIN_10, GPIO_PIN_SET);//ESP8266 Pin Enable
